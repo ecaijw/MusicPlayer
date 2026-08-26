@@ -1,0 +1,38 @@
+# Nested Cursor workspace — project lives in this directory, not Untitled
+/Untitled/
+
+# Gradle
+.gradle/
+build/
+**/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Local SDK path
+local.properties
+
+# Android Studio / IntelliJ
+*.iml
+.idea/
+.navigation/
+captures/
+output.json
+
+# NDK / CMake
+.externalNativeBuild/
+.cxx/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Keystores (never commit secrets)
+*.jks
+*.keystore
+keystore.properties
+
+# Log / profiling
+*.log
+*.hprof
+
+# Kotlin
+.kotlin/

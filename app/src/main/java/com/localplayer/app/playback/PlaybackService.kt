@@ -103,17 +103,13 @@ class PlaybackService : MediaSessionService() {
         }
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-            if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS) {
+            if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS) {
                 pausedByAudioFocus = true
-            } else if (
-                playWhenReady &&
-                reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS &&
-                pausedByAudioFocus
-            ) {
+            } else if (playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) {
+                pausedByAudioFocus = false
+            } else if (playWhenReady && pausedByAudioFocus) {
                 pausedByAudioFocus = false
                 player.pause()
-            } else if (playWhenReady) {
-                pausedByAudioFocus = false
             }
         }
 

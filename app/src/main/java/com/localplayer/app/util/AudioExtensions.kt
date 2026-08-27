@@ -1,18 +1,9 @@
 package com.localplayer.app.util
 
-private val audioMimeTypes = setOf(
-    "audio/mpeg",
-    "audio/wav",
-    "audio/x-wav",
-    "audio/wave",
-    "audio/vnd.wave"
-)
-
-fun isSupportedAudio(name: String, mimeType: String?): Boolean {
+fun isSupportedAudio(name: String): Boolean {
     if (name.startsWith(".")) return false
     val lower = name.lowercase()
-    if (lower.endsWith(".mp3") || lower.endsWith(".wav")) return true
-    return mimeType != null && mimeType.lowercase() in audioMimeTypes
+    return lower.endsWith(".mp3") || lower.endsWith(".wav")
 }
 
 fun formatPlaybackTime(ms: Long, unset: Boolean = false): String {

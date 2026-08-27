@@ -26,8 +26,6 @@ class PlaybackStore(context: Context) {
     suspend fun saveTreeUri(treeUri: String) {
         dataStore.edit {
             it[Keys.TREE] = treeUri
-            it[Keys.FILE] = ""
-            it[Keys.POSITION] = 0L
         }
     }
 
@@ -35,6 +33,13 @@ class PlaybackStore(context: Context) {
         dataStore.edit {
             it[Keys.FILE] = fileUri
             it[Keys.POSITION] = positionMs.coerceAtLeast(0L)
+        }
+    }
+
+    suspend fun clearCurrentTrack() {
+        dataStore.edit {
+            it[Keys.FILE] = ""
+            it[Keys.POSITION] = 0L
         }
     }
 

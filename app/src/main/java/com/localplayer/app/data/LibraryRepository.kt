@@ -12,12 +12,17 @@ class LibraryRepository(private val context: Context) {
         strength = Collator.PRIMARY
     }
 
-    fun persistTreePermission(treeUri: Uri) {
+    fun takeTreePermission(treeUri: Uri) {
+        context.contentResolver.takePersistableUriPermission(
+            treeUri,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION
+        )
+    }
+
+    fun releaseOtherTreePermissions(keepTreeUri: Uri) {
         val resolver = context.contentResolver
-        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
-        resolver.takePersistableUriPermission(treeUri, flags)
         resolver.persistedUriPermissions
-            .filter { it.isReadPermission && it.uri != treeUri }
+            .filter { it.isReadPermission && it.uri != keepTreeUri }
             .forEach { permission ->
                 try {
                     resolver.releasePersistableUriPermission(
@@ -50,22 +55,16 @@ class LibraryRepository(private val context: Context) {
             .mapNotNull { file ->
                 if (!file.isFile) return@mapNotNull null
                 val name = file.name ?: return@mapNotNull null
-                if (!isSupportedAudio(name, file.type)) return@mapNotNull null
+                if (!isSupportedAudio(name)) return@mapNotNull null
                 AudioFile(
                     documentUri = file.uri,
                     displayName = name,
                     mimeType = file.type
                 )
             }
-            .sortedWith { a, b -> collator.compare(a.displayName, b.displayName) }
-    }
-
-    /**
-     * v2 预留：从文件管理器打开的单文件加载同目录列表。
-     * v1 不调用。
-     */
-    @Suppress("unused")
-    fun loadFromOpenedFile(@Suppress("UNUSED_PARAMETER") fileUri: Uri): List<AudioFile> {
-        return emptyList()
+            .sortedWith { a, b ->
+                val byName = collator.compare(a.displayName, b.displayName)
+                if (byName != 0) byName else a.documentUri.toString().compareTo(b.documentUri.toString())
+            }
     }
 }

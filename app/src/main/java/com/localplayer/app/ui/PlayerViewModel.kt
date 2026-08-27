@@ -1,11 +1,7 @@
 package com.localplayer.app.ui
 
-import android.Manifest
 import android.app.Application
-import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
-import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -29,7 +25,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
-    private val app = application
     private val library = LibraryRepository(application)
     private val store = PlaybackStore(application)
     private val connection = PlaybackConnection(application)
@@ -46,18 +41,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
         override fun onPlayerError(error: PlaybackException) {
             _uiState.update { it.copy(errorMessage = "无法播放该文件") }
+            viewModelScope.launch { refreshLibraryList() }
         }
     }
 
     init {
-        refreshNotificationPermission()
         viewModelScope.launch {
             try {
                 connection.connect()
                 connection.controller?.addListener(playerListener)
                 restore()
                 observePosition()
-            } catch (error: Exception) {
+            } catch (_: Exception) {
                 _uiState.update { it.copy(errorMessage = "播放器启动失败") }
             }
         }
@@ -65,26 +60,45 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun onDirectoryPicked(treeUri: Uri) {
         viewModelScope.launch {
+            val previousLibrary = _uiState.value.library
+            _uiState.update { it.copy(library = LibraryState.Loading, errorMessage = null) }
             try {
-                library.persistTreePermission(treeUri)
+                library.takeTreePermission(treeUri)
             } catch (_: SecurityException) {
-                _uiState.update { it.copy(errorMessage = "无法读取该目录") }
+                _uiState.update {
+                    it.copy(
+                        library = previousLibrary,
+                        errorMessage = "无法读取该目录"
+                    )
+                }
+                return@launch
+            }
+            val loaded = try {
+                withContext(Dispatchers.IO) { library.loadFromTree(treeUri) }
+            } catch (_: Exception) {
+                _uiState.update {
+                    it.copy(
+                        library = previousLibrary,
+                        errorMessage = "无法读取该目录"
+                    )
+                }
                 return@launch
             }
             store.saveTreeUri(treeUri.toString())
-            val loaded = withContext(Dispatchers.IO) { library.loadFromTree(treeUri) }
             tracks = loaded
             applyPlaylist(loaded, startIndex = 0, startPositionMs = 0L, play = false)
+            library.releaseOtherTreePermissions(treeUri)
             _uiState.update {
                 it.copy(
-                    directoryName = library.directoryName(treeUri),
-                    tracks = loaded,
+                    library = LibraryState.Loaded(
+                        directoryName = library.directoryName(treeUri),
+                        tracks = loaded
+                    ),
                     currentIndex = if (loaded.isEmpty()) -1 else 0,
                     isPlaying = false,
                     positionMs = 0L,
                     durationMs = 0L,
                     durationKnown = false,
-                    needsDirectory = false,
                     errorMessage = null
                 )
             }
@@ -93,9 +107,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun playAt(index: Int) {
         val controller = connection.controller ?: return
-        if (index !in tracks.indices) return
-        controller.seekTo(index, 0L)
-        controller.play()
+        val track = tracks.getOrNull(index) ?: return
+        val playerIndex = indexInPlayer(controller, track.documentUri.toString())
+        if (playerIndex >= 0) {
+            controller.seekTo(playerIndex, 0L)
+            controller.play()
+            return
+        }
+        applyPlaylist(tracks, startIndex = index, startPositionMs = 0L, play = true)
     }
 
     fun playPause() {
@@ -127,15 +146,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         connection.controller?.seekTo(positionMs.coerceAtLeast(0L))
     }
 
-    fun refreshNotificationPermission() {
-        val missing = Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(
-                app,
-                Manifest.permission.POST_NOTIFICATIONS
-            ) != PackageManager.PERMISSION_GRANTED
-        _uiState.update { it.copy(notificationHint = missing) }
-    }
-
     override fun onCleared() {
         connection.controller?.removeListener(playerListener)
         connection.release()
@@ -143,19 +153,21 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private suspend fun restore() {
+        val controller = connection.controller ?: return
+        if (controller.mediaItemCount > 0) {
+            syncLibraryFromStore()
+            publishPlayerState(controller)
+            return
+        }
+
         val persisted = store.load()
         if (persisted.treeUri.isBlank()) {
-            _uiState.update { it.copy(needsDirectory = true) }
+            _uiState.update { it.copy(library = LibraryState.NoDirectory) }
             return
         }
         val treeUri = persisted.treeUri.toUri()
         if (!library.isTreeAccessible(treeUri)) {
-            _uiState.update {
-                it.copy(
-                    needsDirectory = true,
-                    errorMessage = "无法访问上次的目录，请重新选择"
-                )
-            }
+            _uiState.update { it.copy(library = LibraryState.PermissionLost) }
             return
         }
         val loaded = withContext(Dispatchers.IO) { library.loadFromTree(treeUri) }
@@ -170,15 +182,59 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         applyPlaylist(loaded, startIndex.coerceAtLeast(0), startPosition, play = false)
         _uiState.update {
             it.copy(
-                directoryName = library.directoryName(treeUri),
-                tracks = loaded,
+                library = LibraryState.Loaded(
+                    directoryName = library.directoryName(treeUri),
+                    tracks = loaded
+                ),
                 currentIndex = startIndex,
                 positionMs = startPosition,
-                needsDirectory = false,
                 errorMessage = null
             )
         }
-        connection.controller?.let { publishPlayerState(it) }
+        publishPlayerState(controller)
+    }
+
+    private suspend fun syncLibraryFromStore() {
+        val persisted = store.load()
+        if (persisted.treeUri.isBlank()) {
+            return
+        }
+        val treeUri = persisted.treeUri.toUri()
+        if (!library.isTreeAccessible(treeUri)) {
+            _uiState.update { it.copy(library = LibraryState.PermissionLost) }
+            return
+        }
+        val loaded = withContext(Dispatchers.IO) { library.loadFromTree(treeUri) }
+        tracks = loaded
+        _uiState.update {
+            it.copy(
+                library = LibraryState.Loaded(
+                    directoryName = library.directoryName(treeUri),
+                    tracks = loaded
+                ),
+                errorMessage = null
+            )
+        }
+    }
+
+    private suspend fun refreshLibraryList() {
+        val persisted = store.load()
+        if (persisted.treeUri.isBlank()) return
+        val treeUri = persisted.treeUri.toUri()
+        if (!library.isTreeAccessible(treeUri)) {
+            _uiState.update { it.copy(library = LibraryState.PermissionLost) }
+            return
+        }
+        val loaded = withContext(Dispatchers.IO) { library.loadFromTree(treeUri) }
+        tracks = loaded
+        _uiState.update {
+            it.copy(
+                library = LibraryState.Loaded(
+                    directoryName = library.directoryName(treeUri),
+                    tracks = loaded
+                )
+            )
+        }
     }
 
     private fun applyPlaylist(
@@ -216,15 +272,30 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private fun publishPlayerState(player: Player) {
         val duration = player.duration
         val durationKnown = duration != C.TIME_UNSET && duration > 0L
+        val mediaId = player.currentMediaItem?.mediaId
+        val index = if (mediaId.isNullOrBlank() || tracks.isEmpty()) {
+            -1
+        } else {
+            tracks.indexOfFirst { it.documentUri.toString() == mediaId }
+        }
         _uiState.update {
             it.copy(
-                currentIndex = if (tracks.isEmpty()) -1 else player.currentMediaItemIndex,
+                currentIndex = index,
                 isPlaying = player.isPlaying,
                 positionMs = player.currentPosition.coerceAtLeast(0L),
                 durationMs = if (durationKnown) duration else 0L,
                 durationKnown = durationKnown
             )
         }
+    }
+
+    private fun indexInPlayer(player: Player, mediaId: String): Int {
+        for (index in 0 until player.mediaItemCount) {
+            if (player.getMediaItemAt(index).mediaId == mediaId) {
+                return index
+            }
+        }
+        return -1
     }
 
     private fun List<AudioFile>.toMediaItems(): List<MediaItem> {

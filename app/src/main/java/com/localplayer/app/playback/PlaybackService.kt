@@ -8,6 +8,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -25,6 +26,7 @@ class PlaybackService : MediaSessionService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val saveHandler = Handler(Looper.getMainLooper())
     private var pausedByAudioFocus = false
+    private val failedMediaIds = mutableSetOf<String>()
 
     private val periodicSave = object : Runnable {
         override fun run() {
@@ -86,8 +88,30 @@ class PlaybackService : MediaSessionService() {
             }
         }
 
+        override fun onPositionDiscontinuity(
+            oldPosition: Player.PositionInfo,
+            newPosition: Player.PositionInfo,
+            reason: Int
+        ) {
+            if (reason == Player.DISCONTINUITY_REASON_SEEK ||
+                reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT
+            ) {
+                persistProgress()
+            }
+        }
+
+        override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+            if (player.mediaItemCount == 0) {
+                failedMediaIds.clear()
+                scope.launch { store.clearCurrentTrack() }
+            }
+        }
+
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-            val uri = mediaItem?.localConfiguration?.uri?.toString() ?: return
+            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED) {
+                failedMediaIds.clear()
+            }
+            val uri = mediaItem?.mediaId ?: mediaItem?.localConfiguration?.uri?.toString() ?: return
             val position = if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED) {
                 player.currentPosition
             } else {
@@ -103,6 +127,9 @@ class PlaybackService : MediaSessionService() {
         }
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            if (!playWhenReady) {
+                persistProgress()
+            }
             if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS) {
                 pausedByAudioFocus = true
             } else if (playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) {
@@ -114,8 +141,10 @@ class PlaybackService : MediaSessionService() {
         }
 
         override fun onPlayerError(error: PlaybackException) {
-            if (player.hasNextMediaItem()) {
-                player.seekToNextMediaItem()
+            player.currentMediaItem?.mediaId?.let { failedMediaIds += it }
+            val nextIndex = nextPlayableIndex()
+            if (nextIndex >= 0) {
+                player.seekTo(nextIndex, 0L)
                 player.prepare()
                 player.play()
             } else {
@@ -124,8 +153,21 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    private fun nextPlayableIndex(): Int {
+        val start = player.currentMediaItemIndex + 1
+        for (index in start until player.mediaItemCount) {
+            val id = player.getMediaItemAt(index).mediaId
+            if (id !in failedMediaIds) {
+                return index
+            }
+        }
+        return -1
+    }
+
     private fun persistProgress() {
-        val uri = player.currentMediaItem?.localConfiguration?.uri?.toString() ?: return
+        val uri = player.currentMediaItem?.mediaId
+            ?: player.currentMediaItem?.localConfiguration?.uri?.toString()
+            ?: return
         var position = player.currentPosition
         if (player.playbackState == Player.STATE_ENDED) {
             val duration = player.duration

@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -60,8 +61,8 @@ fun PlayerScreen(viewModel: PlayerViewModel = viewModel()) {
                 .navigationBarsPadding()
         ) {
             DirectoryHeader(
-                directoryName = state.directoryName,
-                needsDirectory = state.needsDirectory,
+                library = state.library,
+                pickLabel = if (state.needsDirectoryPicker) "选择目录" else "更换目录",
                 onPickDirectory = { picker.launch(null) }
             )
             HorizontalDivider()
@@ -70,17 +71,11 @@ fun PlayerScreen(viewModel: PlayerViewModel = viewModel()) {
                 onTrackClick = viewModel::playAt,
                 modifier = Modifier.weight(1f)
             )
-            if (state.notificationHint) {
+            val libraryError = (state.library as? LibraryState.Error)?.message
+            val message = state.errorMessage ?: libraryError
+            if (message != null) {
                 Text(
-                    text = "为了回桌面继续播放，需要通知权限",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                )
-            }
-            if (state.errorMessage != null) {
-                Text(
-                    text = state.errorMessage.orEmpty(),
+                    text = message,
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
@@ -99,10 +94,15 @@ fun PlayerScreen(viewModel: PlayerViewModel = viewModel()) {
 
 @Composable
 private fun DirectoryHeader(
-    directoryName: String,
-    needsDirectory: Boolean,
+    library: LibraryState,
+    pickLabel: String,
     onPickDirectory: () -> Unit
 ) {
+    val directoryName = when (library) {
+        is LibraryState.Loaded -> library.directoryName
+        LibraryState.Loading -> "正在加载…"
+        else -> "未选择目录"
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -110,7 +110,7 @@ private fun DirectoryHeader(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            text = directoryName.ifBlank { "未选择目录" },
+            text = directoryName,
             modifier = Modifier
                 .weight(1f)
                 .padding(start = 8.dp),
@@ -119,7 +119,7 @@ private fun DirectoryHeader(
             overflow = TextOverflow.Ellipsis
         )
         TextButton(onClick = onPickDirectory) {
-            Text(if (needsDirectory && directoryName.isBlank()) "选择目录" else "更换目录")
+            Text(pickLabel)
         }
     }
 }
@@ -138,36 +138,45 @@ private fun TrackList(
     }
 
     Box(modifier = modifier.fillMaxWidth()) {
-        when {
-            state.needsDirectory && state.tracks.isEmpty() -> {
-                EmptyHint("请选择包含音频的文件夹")
+        when (val library = state.library) {
+            LibraryState.NoDirectory -> EmptyHint("请选择包含音频的文件夹")
+            LibraryState.PermissionLost -> EmptyHint("无法访问上次的目录，请重新选择")
+            LibraryState.Loading -> {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
             }
-            state.tracks.isEmpty() -> {
-                EmptyHint("该目录没有 mp3 或 wav 文件")
-            }
-            else -> {
-                LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                    itemsIndexed(
-                        items = state.tracks,
-                        key = { _, track -> track.documentUri.toString() }
-                    ) { index, track ->
-                        val selected = index == state.currentIndex
-                        Text(
-                            text = track.displayName,
-                            fontSize = 20.sp,
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (selected) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onTrackClick(index) }
-                                .padding(horizontal = 20.dp, vertical = 14.dp),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
+            is LibraryState.Error -> EmptyHint(library.message)
+            is LibraryState.Loaded -> {
+                if (library.tracks.isEmpty()) {
+                    EmptyHint("该目录没有 mp3 或 wav 文件")
+                } else {
+                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                        itemsIndexed(
+                            items = library.tracks,
+                            key = { _, track -> track.documentUri.toString() }
+                        ) { index, track ->
+                            val selected = index == state.currentIndex
+                            Text(
+                                text = track.displayName,
+                                fontSize = 20.sp,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (selected) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onTrackClick(index) }
+                                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
@@ -205,6 +214,7 @@ private fun PlaybackControls(
     } else {
         state.positionMs.toFloat().coerceIn(0f, sliderMax)
     }
+    val hasTracks = state.tracks.isNotEmpty()
 
     Column(
         modifier = Modifier
@@ -222,7 +232,7 @@ private fun PlaybackControls(
                 dragging = false
             },
             valueRange = 0f..sliderMax,
-            enabled = state.durationKnown && state.tracks.isNotEmpty()
+            enabled = state.durationKnown && hasTracks
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -245,19 +255,19 @@ private fun PlaybackControls(
         ) {
             TextButton(
                 onClick = onPrevious,
-                enabled = state.tracks.isNotEmpty()
+                enabled = hasTracks
             ) {
                 Text("上一首", fontSize = 18.sp)
             }
             Button(
                 onClick = onPlayPause,
-                enabled = state.tracks.isNotEmpty()
+                enabled = hasTracks
             ) {
                 Text(if (state.isPlaying) "暂停" else "播放", fontSize = 18.sp)
             }
             TextButton(
                 onClick = onNext,
-                enabled = state.tracks.isNotEmpty()
+                enabled = hasTracks
             ) {
                 Text("下一首", fontSize = 18.sp)
             }

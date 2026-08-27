@@ -13,6 +13,8 @@ val BackgroundLight = Color(0xFFFFFBFE)
 val BackgroundDark = Color(0xFF1C1B1F)
 val SurfaceLight = Color(0xFFFFFFFF)
 val SurfaceDark = Color(0xFF2B2930)
+val PlayerBarLight = Color(0xFFF7F2FA)
+val PlayerBarDark = Color(0xFF2A2430)
 
 val OnSurfaceLight = Color(0xFF1C1B1F)
 val OnSurfaceDark = Color(0xFFE6E1E5)

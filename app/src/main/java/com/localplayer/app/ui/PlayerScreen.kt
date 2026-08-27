@@ -6,6 +6,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,6 +30,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GraphicEq
@@ -37,6 +40,7 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -45,7 +49,6 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -59,7 +62,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -423,6 +428,7 @@ private fun EmptyHint(text: String) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PlaybackControls(
     state: PlayerUiState,
@@ -440,19 +446,23 @@ private fun PlaybackControls(
         state.positionMs.toFloat().coerceIn(0f, sliderMax)
     }
     val hasTracks = state.tracks.isNotEmpty()
+    val sliderEnabled = state.durationKnown && hasTracks
+    val interactionSource = remember { MutableInteractionSource() }
+    val activeTrack = MaterialTheme.colorScheme.primary
+    val inactiveTrack = MaterialTheme.colorScheme.primaryContainer
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        color = MaterialTheme.colorScheme.surface,
-        shadowElevation = 8.dp,
-        tonalElevation = 2.dp
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shadowElevation = 2.dp,
+        tonalElevation = 0.dp
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
-                .padding(horizontal = 20.dp, vertical = 16.dp)
+                .padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 0.dp)
         ) {
             Slider(
                 value = sliderValue,
@@ -465,18 +475,61 @@ private fun PlaybackControls(
                     dragging = false
                 },
                 valueRange = 0f..sliderMax,
-                enabled = state.durationKnown && hasTracks,
-                colors = SliderDefaults.colors(
-                    thumbColor = MaterialTheme.colorScheme.primary,
-                    activeTrackColor = MaterialTheme.colorScheme.primary,
-                    inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant
-                ),
+                enabled = sliderEnabled,
+                interactionSource = interactionSource,
+                thumb = {
+                    Box(
+                        modifier = Modifier
+                            .size(16.dp)
+                            .shadow(1.dp, CircleShape)
+                            .background(
+                                color = if (sliderEnabled) {
+                                    activeTrack
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                shape = CircleShape
+                            )
+                    )
+                },
+                track = { sliderState ->
+                    val range = sliderState.valueRange
+                    val span = range.endInclusive - range.start
+                    val fraction = if (span <= 0f) {
+                        0f
+                    } else {
+                        ((sliderState.value - range.start) / span).coerceIn(0f, 1f)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(inactiveTrack)
+                        )
+                        if (fraction > 0f) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(fraction)
+                                    .fillMaxHeight()
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(activeTrack)
+                            )
+                        }
+                    }
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(44.dp)
+                    .height(36.dp)
             )
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 8.dp, end = 8.dp, top = 2.dp),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
@@ -495,14 +548,14 @@ private fun PlaybackControls(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 4.dp),
+                    .offset(y = (-20).dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(
                     onClick = onPrevious,
                     enabled = hasTracks,
-                    modifier = Modifier.size(48.dp)
+                    modifier = Modifier.size(52.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Filled.SkipPrevious,
@@ -512,14 +565,14 @@ private fun PlaybackControls(
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
                         },
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(28.dp)
                     )
                 }
-                Spacer(modifier = Modifier.width(16.dp))
+                Spacer(modifier = Modifier.width(32.dp))
                 FilledIconButton(
                     onClick = onPlayPause,
                     enabled = hasTracks,
-                    modifier = Modifier.size(56.dp),
+                    modifier = Modifier.size(58.dp),
                     colors = IconButtonDefaults.filledIconButtonColors(
                         containerColor = MaterialTheme.colorScheme.secondary,
                         contentColor = MaterialTheme.colorScheme.onSecondary,
@@ -536,14 +589,14 @@ private fun PlaybackControls(
                         contentDescription = stringResource(
                             if (state.isPlaying) R.string.pause else R.string.play
                         ),
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(28.dp)
                     )
                 }
-                Spacer(modifier = Modifier.width(16.dp))
+                Spacer(modifier = Modifier.width(32.dp))
                 IconButton(
                     onClick = onNext,
                     enabled = hasTracks,
-                    modifier = Modifier.size(48.dp)
+                    modifier = Modifier.size(52.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Filled.SkipNext,
@@ -553,7 +606,7 @@ private fun PlaybackControls(
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
                         },
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(28.dp)
                     )
                 }
             }

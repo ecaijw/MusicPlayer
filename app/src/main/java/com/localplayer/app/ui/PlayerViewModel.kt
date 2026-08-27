@@ -14,6 +14,7 @@ import com.localplayer.app.data.AudioFile
 import com.localplayer.app.data.LibraryRepository
 import com.localplayer.app.data.PlaybackStore
 import com.localplayer.app.playback.PlaybackConnection
+import com.localplayer.app.util.appIconPng
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,6 +34,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
     private var tracks: List<AudioFile> = emptyList()
+    private val defaultArtwork: ByteArray by lazy { getApplication<Application>().appIconPng() }
 
     private val playerListener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
@@ -307,6 +309,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     MediaMetadata.Builder()
                         .setTitle(file.displayName)
                         .setDisplayTitle(file.displayName)
+                        .setArtworkData(defaultArtwork, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
                         .build()
                 )
                 .build()

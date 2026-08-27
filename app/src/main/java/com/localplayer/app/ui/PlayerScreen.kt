@@ -2,7 +2,9 @@ package com.localplayer.app.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -34,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -106,20 +110,23 @@ private fun DirectoryHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = directoryName,
             modifier = Modifier
                 .weight(1f)
-                .padding(start = 8.dp),
+                .padding(end = 12.dp),
             style = MaterialTheme.typography.titleMedium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        TextButton(onClick = onPickDirectory) {
-            Text(pickLabel)
+        Button(
+            onClick = onPickDirectory,
+            modifier = Modifier.widthIn(min = 112.dp)
+        ) {
+            Text(pickLabel, fontSize = 16.sp)
         }
     }
 }
@@ -154,6 +161,16 @@ private fun TrackList(
                 if (library.tracks.isEmpty()) {
                     EmptyHint("该目录没有 mp3 或 wav 文件")
                 } else {
+                    val highlightContainer = if (isSystemInDarkTheme()) {
+                        Color(0xFF5C4E3A)
+                    } else {
+                        Color(0xFFE8DCC8)
+                    }
+                    val highlightOn = if (isSystemInDarkTheme()) {
+                        Color(0xFFF2EAD8)
+                    } else {
+                        Color(0xFF1B1916)
+                    }
                     LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                         itemsIndexed(
                             items = library.tracks,
@@ -163,14 +180,15 @@ private fun TrackList(
                             Text(
                                 text = track.displayName,
                                 fontSize = 20.sp,
-                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                                 color = if (selected) {
-                                    MaterialTheme.colorScheme.primary
+                                    highlightOn
                                 } else {
                                     MaterialTheme.colorScheme.onSurface
                                 },
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .background(if (selected) highlightContainer else Color.Transparent)
                                     .clickable { onTrackClick(index) }
                                     .padding(horizontal = 20.dp, vertical = 14.dp),
                                 maxLines = 2,
@@ -219,7 +237,7 @@ private fun PlaybackControls(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(horizontal = 8.dp, vertical = 12.dp)
     ) {
         Slider(
             value = sliderValue,
@@ -232,10 +250,16 @@ private fun PlaybackControls(
                 dragging = false
             },
             valueRange = 0f..sliderMax,
-            enabled = state.durationKnown && hasTracks
+            enabled = state.durationKnown && hasTracks,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 28.dp)
+                .height(44.dp)
         )
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 28.dp),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(

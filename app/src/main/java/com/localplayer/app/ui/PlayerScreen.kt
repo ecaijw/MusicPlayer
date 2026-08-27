@@ -5,6 +5,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -50,9 +52,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -74,6 +78,7 @@ import com.localplayer.app.util.formatPlaybackTime
 import com.localplayer.app.util.trackLabel
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 
 @Composable
 fun PlayerScreen(viewModel: PlayerViewModel = viewModel()) {
@@ -178,10 +183,12 @@ private fun TrackList(
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
+    val previousIndex = remember { mutableIntStateOf(-1) }
     LaunchedEffect(state.currentIndex) {
-        if (state.currentIndex >= 0) {
-            listState.animateScrollToItem(state.currentIndex)
-        }
+        val newIndex = state.currentIndex
+        val oldIndex = previousIndex.intValue
+        previousIndex.intValue = newIndex
+        listState.adjustForCurrentTrack(oldIndex, newIndex)
     }
 
     Box(modifier = modifier.fillMaxWidth()) {
@@ -217,6 +224,54 @@ private fun TrackList(
                 }
             }
         }
+    }
+}
+
+private suspend fun LazyListState.adjustForCurrentTrack(oldIndex: Int, newIndex: Int) {
+    if (newIndex < 0) return
+    snapshotFlow { layoutInfo.visibleItemsInfo }
+        .first { it.isNotEmpty() }
+    when {
+        oldIndex < 0 -> animateScrollToItem(newIndex)
+        newIndex == oldIndex - 1 || newIndex == oldIndex + 1 -> {
+            ensureItemFullyVisible(newIndex)
+        }
+        else -> Unit
+    }
+}
+
+private suspend fun LazyListState.ensureItemFullyVisible(index: Int) {
+    val firstDelta = scrollDeltaToFullyShow(index) ?: return
+    if (firstDelta == 0f) return
+    animateScrollBy(firstDelta)
+    snapshotFlow { layoutInfo.visibleItemsInfo.any { it.index == index } }
+        .first { it }
+    val remaining = scrollDeltaToFullyShow(index) ?: return
+    if (remaining != 0f) {
+        animateScrollBy(remaining)
+    }
+}
+
+private fun LazyListState.scrollDeltaToFullyShow(index: Int): Float? {
+    val info = layoutInfo
+    val visible = info.visibleItemsInfo
+    if (visible.isEmpty()) return null
+    val start = info.viewportStartOffset
+    val end = info.viewportEndOffset
+    val item = visible.find { it.index == index }
+    if (item != null) {
+        val topClip = start - item.offset
+        if (topClip > 1) return -topClip.toFloat()
+        val bottomClip = item.offset + item.size - end
+        if (bottomClip > 1) return bottomClip.toFloat()
+        return 0f
+    }
+    val first = visible.first()
+    val last = visible.last()
+    return when {
+        index < first.index -> -first.size.toFloat() * (first.index - index)
+        index > last.index -> last.size.toFloat() * (index - last.index)
+        else -> 0f
     }
 }
 
